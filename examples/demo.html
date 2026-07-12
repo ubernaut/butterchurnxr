@@ -40,11 +40,56 @@
     #presetCycleLength {
       width: 50px;
     }
+
+    #xrOverlay {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* in AR the page body is the DOM overlay: keep the controls, drop the rest */
+    body.in-ar #canvas,
+    body.in-ar #audioSelectWrapper {
+      display: none;
+    }
+
+    #xrStatus {
+      display: inline-block;
+      margin: 12px;
+      padding: 6px 10px;
+      background: rgba(0, 0, 0, 0.5);
+      color: #0f8;
+      font-family: monospace;
+      font-size: 12px;
+      border-radius: 6px;
+      pointer-events: none;
+    }
+
+    #xrStatus:empty {
+      display: none;
+    }
+
+    #enterAR {
+      display: none;
+      margin: 8px 0;
+      padding: 12px 20px;
+      width: fit-content;
+      background: #5b21b6;
+      color: #fff;
+      font-family: sans-serif;
+      font-size: 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
   </style>
   <link rel="stylesheet" href="https://unpkg.com/normalize.css/normalize.css" />
 
   <script type="module">
-    import butterchurn from 'https://unpkg.com/butterchurn@3.0.0-beta.5/dist/butterchurn.js';
+    import butterchurn from '../dist/butterchurn.js';
+    import * as THREE from 'three';
 
     $(function() {
       var visualizer = null;
@@ -74,6 +119,8 @@
         delayedAudible.connect(audioContext.destination);
 
         visualizer.connectAudio(delayedAudible);
+        currentAudioNode = delayedAudible;
+        xrPool.forEach((e) => e.visualizer.connectAudio(delayedAudible));
       }
 
       function startRenderer() {
@@ -129,10 +176,12 @@
         audioContext.resume();
 
         var gainNode = audioContext.createGain();
-        gainNode.gain.value = 1.25;
+        gainNode.gain.value = MIC_GAIN;
         sourceNode.connect(gainNode);
 
         visualizer.connectAudio(gainNode);
+        currentAudioNode = gainNode;
+        xrPool.forEach((e) => e.visualizer.connectAudio(gainNode));
         startRenderer();
       }
 
@@ -147,6 +196,7 @@
         }
 
         visualizer.loadPreset(presets[presetKeys[presetIndex]], blendTime);
+        if (xrRenderer) randomizeXRPresets(blendTime);
         $('#presetSelect').val(presetIndex);
       }
 
@@ -218,12 +268,474 @@
       $("#micSelect").click(() => {
         $("#audioSelectWrapper").css('display', 'none');
 
-        navigator.getUserMedia({ audio: true }, (stream) => {
+        // disable browser processing that squashes music dynamics
+        navigator.mediaDevices.getUserMedia({ audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        } }).then((stream) => {
           var micSourceNode = audioContext.createMediaStreamSource(stream);
           connectMicAudio(micSourceNode, audioContext);
-        }, (err) => {
-          console.log('Error getting audio stream from getUserMedia');
+        }).catch((err) => {
+          console.log('Error getting audio stream from getUserMedia', err);
         });
+      });
+
+      // --- WebXR (three.js) ---
+      // Projects the butterchurn canvas as a texture onto every plane the
+      // headset detects; if none show up, a plane floats in front of the user.
+      var xrRenderer = null;
+      var xrScene = null;
+      var xrCamera = null;
+      var xrSessionStart = 0;
+      var fallbackMesh = null;
+      var planeEntries = new Map(); // XRPlane -> { mesh, lastChangedTime, material }
+
+      const FALLBACK_DELAY_MS = 3000;
+      const MIC_GAIN = 4.0;
+      // pull plane visuals slightly into the room so they don't z-fight the
+      // real walls in passthrough
+      const PLANE_INSET = 0.02;
+      const XR_TEXTURE_SIZE = 512;
+      var lastPoolSize = 0;
+
+      var xrPool = []; // { visualizer, canvas, texture, material }
+      var currentAudioNode = null;
+      var planeMatCounter = 0;
+      var rightABPrev = false;
+
+      // room-mesh occluders: depth-only, drawn before the planes so real
+      // furniture punches passthrough holes in the wall visuals
+      var meshEntries = new Map(); // XRMesh -> { mesh, lastChangedTime, coverMaterial }
+      var lastMeshCount = 0;
+      var occludeMaterial = new THREE.MeshBasicMaterial({ colorWrite: false });
+      var planeInsetMatrix = new THREE.Matrix4(); // scratch
+
+      function randomPresetObj() {
+        return presets[presetKeys[Math.floor(Math.random() * presetKeys.length)]];
+      }
+
+      function activePoolCount() {
+        var n = parseInt($('#poolCount').val(), 10);
+        return Math.min(5, Math.max(1, isNaN(n) ? 3 : n));
+      }
+
+      // grows on demand; shrinking just idles the extra instances (WebGL
+      // contexts aren't worth tearing down), so only the active slice renders
+      function getXRPool() {
+        var n = activePoolCount();
+        while (xrPool.length < n) {
+          var c = document.createElement('canvas');
+          c.width = XR_TEXTURE_SIZE;
+          c.height = XR_TEXTURE_SIZE;
+          var v = butterchurn.createVisualizer(audioContext, c, {
+            width: XR_TEXTURE_SIZE,
+            height: XR_TEXTURE_SIZE,
+            pixelRatio: 1,
+            textureRatio: 1,
+          });
+          if (currentAudioNode) v.connectAudio(currentAudioNode);
+          v.loadPreset(randomPresetObj(), 0);
+          var t = new THREE.CanvasTexture(c);
+          t.colorSpace = THREE.SRGBColorSpace;
+          xrPool.push({
+            visualizer: v,
+            canvas: c,
+            texture: t,
+            // negative offset so plane visuals win depth ties against the
+            // furniture boxes they sit on (e.g. a table plane vs its box top)
+            material: new THREE.MeshBasicMaterial({
+              map: t,
+              side: THREE.DoubleSide,
+              polygonOffset: true,
+              polygonOffsetFactor: -2,
+              polygonOffsetUnits: -8,
+            }),
+          });
+        }
+        return xrPool.slice(0, n);
+      }
+
+      function randomizeXRPresets(blendTime = 1.0) {
+        getXRPool().forEach((e) => e.visualizer.loadPreset(randomPresetObj(), blendTime));
+      }
+
+      // spread the active visualizers back across existing planes/meshes
+      // after the pool count changes
+      function reassignMaterials(pool) {
+        var i = 0;
+        planeEntries.forEach((entry) => {
+          entry.material = pool[i++ % pool.length].material;
+          entry.mesh.material = entry.material;
+        });
+        meshEntries.forEach((entry) => {
+          entry.coverMaterial = pool[i++ % pool.length].material;
+        });
+        planeMatCounter = i;
+      }
+
+      function pollControllers(frame) {
+        var pressed = false;
+        for (var source of frame.session.inputSources) {
+          if (source.handedness === 'right' && source.gamepad) {
+            var b = source.gamepad.buttons;
+            // xr-standard mapping: 4 = A, 5 = B
+            pressed = !!((b[4] && b[4].pressed) || (b[5] && b[5].pressed));
+          }
+        }
+        if (pressed && !rightABPrev) randomizeXRPresets();
+        rightABPrev = pressed;
+      }
+
+      var lastStatusUpdate = 0;
+      function setXRStatus(time, text) {
+        if (time - lastStatusUpdate < 500) return;
+        lastStatusUpdate = time;
+        $('#xrStatus').text(text);
+      }
+
+      function disposeMesh(mesh) {
+        mesh.traverse((obj) => {
+          if (obj.geometry) obj.geometry.dispose();
+        });
+      }
+
+      function addDebugEdges(mesh) {
+        mesh.add(new THREE.LineSegments(
+          new THREE.EdgesGeometry(mesh.geometry),
+          new THREE.LineBasicMaterial({ color: 0x00ff88 })
+        ));
+      }
+
+      function xrPlaneGeometry(polygon) {
+        var minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        polygon.forEach((p) => {
+          minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+          minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+        });
+
+        var shape = new THREE.Shape(polygon.map((p) => new THREE.Vector2(p.x, p.z)));
+        var geom = new THREE.ShapeGeometry(shape);
+
+        // stretch the visualization across the plane's bounding box
+        var pos = geom.attributes.position;
+        var uv = geom.attributes.uv;
+        for (var i = 0; i < pos.count; i++) {
+          uv.setXY(
+            i,
+            (pos.getX(i) - minX) / (maxX - minX || 1),
+            (pos.getY(i) - minZ) / (maxZ - minZ || 1)
+          );
+        }
+
+        // ShapeGeometry lies in XY; plane-local polygons lie in XZ (normal +Y)
+        geom.rotateX(Math.PI / 2);
+        return geom;
+      }
+
+      function xrMeshGeometry(xrMesh) {
+        var geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.BufferAttribute(xrMesh.vertices, 3));
+        geom.setIndex(new THREE.BufferAttribute(xrMesh.indices, 1));
+
+        // per-face box projection UVs so cover mode isn't smeared on the sides
+        geom = geom.toNonIndexed();
+        geom.computeVertexNormals();
+        geom.computeBoundingBox();
+        var bb = geom.boundingBox;
+        var size = new THREE.Vector3().subVectors(bb.max, bb.min);
+        size.x = size.x || 1; size.y = size.y || 1; size.z = size.z || 1;
+
+        var pos = geom.attributes.position;
+        var norm = geom.attributes.normal;
+        var uv = new Float32Array(pos.count * 2);
+        for (var i = 0; i < pos.count; i++) {
+          var nx = Math.abs(norm.getX(i)), ny = Math.abs(norm.getY(i)), nz = Math.abs(norm.getZ(i));
+          var u, v;
+          if (ny >= nx && ny >= nz) {
+            u = (pos.getX(i) - bb.min.x) / size.x; v = (pos.getZ(i) - bb.min.z) / size.z;
+          } else if (nx >= nz) {
+            u = (pos.getZ(i) - bb.min.z) / size.z; v = (pos.getY(i) - bb.min.y) / size.y;
+          } else {
+            u = (pos.getX(i) - bb.min.x) / size.x; v = (pos.getY(i) - bb.min.y) / size.y;
+          }
+          uv[i * 2] = u; uv[i * 2 + 1] = v;
+        }
+        geom.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+        return geom;
+      }
+
+      function updateXRMeshes(frame) {
+        var detected = frame.detectedMeshes;
+        var refSpace = xrRenderer.xr.getReferenceSpace();
+        var enabled = $('#roomMesh').is(':checked');
+        var mode = $('#roomMeshMode').val();
+        if (mode === 'depth') enabled = false; // live depth handles occlusion
+        lastMeshCount = 0;
+
+        meshEntries.forEach((entry, m) => {
+          if (!detected || !detected.has(m)) {
+            xrScene.remove(entry.mesh);
+            disposeMesh(entry.mesh);
+            meshEntries.delete(m);
+          }
+        });
+        if (!detected) return;
+
+        detected.forEach((xrMesh) => {
+          // the global room-scan mesh duplicates the walls/floor and would
+          // z-fight the plane visuals — furniture boxes only
+          if (xrMesh.semanticLabel === 'global mesh') return;
+          lastMeshCount++;
+
+          var entry = meshEntries.get(xrMesh);
+          if (!entry || entry.lastChangedTime !== xrMesh.lastChangedTime) {
+            var coverMaterial = entry ? entry.coverMaterial : null;
+            if (!coverMaterial) {
+              var pool = getXRPool();
+              coverMaterial = pool[planeMatCounter++ % pool.length].material;
+            }
+            if (entry) {
+              xrScene.remove(entry.mesh);
+              disposeMesh(entry.mesh);
+            }
+            var mesh = new THREE.Mesh(xrMeshGeometry(xrMesh), occludeMaterial);
+            mesh.matrixAutoUpdate = false;
+            entry = { mesh: mesh, lastChangedTime: xrMesh.lastChangedTime, coverMaterial: coverMaterial };
+            meshEntries.set(xrMesh, entry);
+            xrScene.add(mesh);
+          }
+
+          if (!enabled) {
+            entry.mesh.visible = false;
+            return;
+          }
+
+          entry.mesh.material = mode === 'cover' ? entry.coverMaterial : occludeMaterial;
+          entry.mesh.renderOrder = mode === 'cover' ? 0 : -1; // occluders draw first
+
+          var pose = frame.getPose(xrMesh.meshSpace, refSpace);
+          if (pose) {
+            entry.mesh.visible = true;
+            entry.mesh.matrix.fromArray(pose.transform.matrix);
+          } else {
+            entry.mesh.visible = false;
+          }
+        });
+      }
+
+      function spawnFallbackPlane(frame, refSpace) {
+        var viewerPose = frame.getViewerPose(refSpace);
+        var geom = new THREE.PlaneGeometry(2, 1.5);
+        fallbackMesh = new THREE.Mesh(geom, getXRPool()[0].material);
+        addDebugEdges(fallbackMesh);
+
+        if (viewerPose) {
+          var t = viewerPose.transform;
+          var viewerPos = new THREE.Vector3(t.position.x, t.position.y, t.position.z);
+          var forward = new THREE.Vector3(0, 0, -1)
+            .applyQuaternion(new THREE.Quaternion(t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w));
+          forward.y = 0;
+          if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
+          forward.normalize();
+
+          fallbackMesh.position.copy(viewerPos).addScaledVector(forward, 2);
+          fallbackMesh.lookAt(viewerPos);
+        } else {
+          fallbackMesh.position.set(0, 1.5, -2);
+        }
+
+        xrScene.add(fallbackMesh);
+      }
+
+      function updateXRPlanes(time, frame) {
+        var refSpace = xrRenderer.xr.getReferenceSpace();
+        var detected = frame.detectedPlanes;
+
+        if (detected && detected.size > 0) {
+          if (fallbackMesh) {
+            xrScene.remove(fallbackMesh);
+            disposeMesh(fallbackMesh);
+            fallbackMesh = null;
+          }
+
+          planeEntries.forEach((entry, plane) => {
+            if (!detected.has(plane)) {
+              xrScene.remove(entry.mesh);
+              disposeMesh(entry.mesh);
+              planeEntries.delete(plane);
+            }
+          });
+
+          var viewerPose = frame.getViewerPose(refSpace);
+          var vp = viewerPose ? viewerPose.transform.position : null;
+          var labels = [];
+          var floorY = null;
+          detected.forEach((plane) => {
+            labels.push(plane.semanticLabel || 'unlabeled');
+
+            var entry = planeEntries.get(plane);
+            if (!entry || entry.lastChangedTime !== plane.lastChangedTime) {
+              // keep a plane's visualizer stable across geometry rebuilds;
+              // new planes take the next visualizer round-robin
+              var material = entry ? entry.material : null;
+              if (!material) {
+                var pool = getXRPool();
+                material = pool[planeMatCounter++ % pool.length].material;
+              }
+              if (entry) {
+                xrScene.remove(entry.mesh);
+                disposeMesh(entry.mesh);
+              }
+              var mesh = new THREE.Mesh(xrPlaneGeometry(plane.polygon), material);
+              addDebugEdges(mesh);
+              mesh.matrixAutoUpdate = false;
+              entry = { mesh: mesh, lastChangedTime: plane.lastChangedTime, material: material };
+              planeEntries.set(plane, entry);
+              xrScene.add(mesh);
+            }
+
+            var pose = frame.getPose(plane.planeSpace, refSpace);
+            if (pose) {
+              entry.mesh.visible = true;
+              var m = pose.transform.matrix;
+              entry.mesh.matrix.fromArray(m);
+              if (vp) {
+                // inset the visual along its normal toward whichever side the
+                // viewer is on, so it sits just in front of the real surface
+                // regardless of which way the runtime's plane normal points
+                var side =
+                  (vp.x - m[12]) * m[4] +
+                  (vp.y - m[13]) * m[5] +
+                  (vp.z - m[14]) * m[6] >= 0 ? 1 : -1;
+                entry.mesh.matrix.multiply(
+                  planeInsetMatrix.makeTranslation(0, side * PLANE_INSET, 0));
+              }
+              if (plane.semanticLabel === 'floor') {
+                floorY = pose.transform.position.y;
+              }
+            } else {
+              entry.mesh.visible = false;
+            }
+          });
+
+          setXRStatus(time,
+            detected.size + ' planes [' + labels.join(', ') + ']' +
+            (vp ? ' | you @ ' + vp.x.toFixed(1) + ',' + vp.y.toFixed(1) + ',' + vp.z.toFixed(1) : '') +
+            (floorY !== null ? ' | floor y=' + floorY.toFixed(2) + ' (should be ~0)' : '') +
+            ' | ' + lastMeshCount + ' furniture meshes');
+        } else if (!fallbackMesh && planeEntries.size === 0 &&
+                   time - xrSessionStart > FALLBACK_DELAY_MS) {
+          spawnFallbackPlane(frame, refSpace);
+          setXRStatus(time, 'no planes reported by headset — spawned fallback plane');
+        } else if (!fallbackMesh && planeEntries.size === 0) {
+          setXRStatus(time, 'waiting for plane data...');
+        }
+      }
+
+      function onXRFrame(time, frame) {
+        if (!frame) return;
+        if (!xrSessionStart) xrSessionStart = time;
+
+        var pool = getXRPool();
+        if (pool.length !== lastPoolSize) {
+          lastPoolSize = pool.length;
+          reassignMaterials(pool);
+        }
+        pool.forEach((e) => {
+          e.visualizer.render();
+          e.texture.needsUpdate = true;
+        });
+
+        pollControllers(frame);
+        updateXRPlanes(time, frame);
+        updateXRMeshes(frame);
+        xrRenderer.render(xrScene, xrCamera);
+      }
+
+      function cleanupXR() {
+        if (xrRenderer) {
+          xrRenderer.setAnimationLoop(null);
+          xrRenderer.dispose();
+          xrRenderer = null;
+        }
+        planeEntries.forEach((entry) => disposeMesh(entry.mesh));
+        planeEntries.clear();
+        meshEntries.forEach((entry) => disposeMesh(entry.mesh));
+        meshEntries.clear();
+        lastMeshCount = 0;
+        if (fallbackMesh) {
+          disposeMesh(fallbackMesh);
+          fallbackMesh = null;
+        }
+        xrScene = null;
+        xrSessionStart = 0;
+        planeMatCounter = 0;
+        rightABPrev = false;
+        lastStatusUpdate = 0;
+        $('#xrStatus').text('');
+        $('body').removeClass('in-ar');
+        $('#enterAR span').text('Enter AR');
+      }
+
+      async function enterAR() {
+        if (audioContext) audioContext.resume();
+
+        var sessionInit = {
+          requiredFeatures: ['local-floor'],
+          optionalFeatures: ['plane-detection', 'mesh-detection', 'dom-overlay'],
+          domOverlay: { root: document.body },
+        };
+        if ($('#roomMesh').is(':checked') && $('#roomMeshMode').val() === 'depth') {
+          // three.js applies real-world occlusion automatically when the
+          // session grants gpu-optimized depth sensing
+          sessionInit.optionalFeatures.push('depth-sensing');
+          sessionInit.depthSensing = {
+            usagePreference: ['gpu-optimized'],
+            dataFormatPreference: ['luminance-alpha'],
+          };
+        }
+        var session = await navigator.xr.requestSession('immersive-ar', sessionInit);
+
+        xrRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        xrRenderer.xr.enabled = true;
+        xrRenderer.xr.setReferenceSpaceType('local-floor');
+
+        xrScene = new THREE.Scene();
+        xrCamera = new THREE.PerspectiveCamera(70, 1, 0.01, 100);
+
+        // debug: with local-floor, y=0 must be the physical floor at your
+        // session start position — if this grid doesn't lie on your real
+        // floor, the reference space itself is off
+        xrScene.add(new THREE.GridHelper(2, 8, 0xffff00, 0x888800));
+        xrScene.add(new THREE.AxesHelper(0.5));
+
+        getXRPool();
+
+        session.addEventListener('end', cleanupXR);
+
+        await xrRenderer.xr.setSession(session);
+        $('body').addClass('in-ar');
+        $('#enterAR span').text('Exit AR');
+        xrRenderer.setAnimationLoop(onXRFrame);
+      }
+
+      if (navigator.xr && navigator.xr.isSessionSupported) {
+        navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+          if (supported) $('#enterAR').show();
+        }).catch(() => {});
+      }
+
+      $('#enterAR').click(() => {
+        if (xrRenderer) {
+          xrRenderer.xr.getSession().end();
+        } else {
+          enterAR().catch((err) => {
+            console.error('Failed to start AR session', err);
+            $('#enterAR span').text('AR failed: ' + err.message);
+            setTimeout(() => $('#enterAR span').text('Enter AR'), 5000);
+          });
+        }
       });
 
       function initPlayer() {
@@ -272,11 +784,30 @@
         <span>Use Mic</span>
       </div>
     </div>
+    <div id="enterAR">
+      <span>Enter AR</span>
+    </div>
+    <div id="xrOverlay">
+      <div id="xrStatus"></div>
+    </div>
     <div id="presetControls">
       <div>Preset: <select id="presetSelect"></select></div>
       <div>Cycle: <input type="checkbox" id="presetCycle" checked></input>
-                  <input type="number" id="presetCycleLength"step="1" value="15" min="1"></input></div>
+                  <input type="number" id="presetCycleLength" step="1" value="15" min="1"></input></div>
       <div>Random: <input type="checkbox" id="presetRandom" checked></input></div>
+      <div>Visualizers: <select id="poolCount">
+                    <option>1</option>
+                    <option>2</option>
+                    <option selected>3</option>
+                    <option>4</option>
+                    <option>5</option>
+                  </select></div>
+      <div>Occlusion: <input type="checkbox" id="roomMesh" checked>
+                  <select id="roomMeshMode">
+                    <option value="occlude">furniture occludes (room mesh)</option>
+                    <option value="cover">visualize on furniture too</option>
+                    <option value="depth">live depth occlusion (set before Enter AR)</option>
+                  </select></div>
     </div>
     <canvas id='canvas' width='800' height='600'>
     </canvas>

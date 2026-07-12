@@ -14,6 +14,7 @@
   "scripts": {
     "build": "NODE_ENV=production rollup -c",
     "dev": "rollup -c -w",
+    "demo": "vite",
     "dev-build": "rollup -c",
     "test": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --config jest.config.mjs",
     "test:visual": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --config jest.config.mjs test/visual/regression.test.js",
@@ -47,6 +48,7 @@
     "@rollup/plugin-terser": "^0.4.4",
     "@rollup/pluginutils": "^5.2.0",
     "@types/jest": "^30.0.0",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "assemblyscript": "^0.17.11",
     "butterchurn-presets": "3.0.0-beta.4",
     "butterchurn-presets-js": "npm:butterchurn-presets@^2.4.7",
@@ -57,7 +59,9 @@
     "prettier": "^2.1.2",
     "puppeteer": "^24.12.1",
     "rollup": "^4.44.2",
-    "rollup-plugin-copy": "^3.5.0"
+    "rollup-plugin-copy": "^3.5.0",
+    "three": "^0.185.1",
+    "vite": "^8.1.4"
   },
   "browserslist": "supports audio-api and supports webgl2 and last 3 years",
   "packageManager": "pnpm@10.6.5+sha1.da220e966c2db3275efb5928cf8f3592681b106b",
