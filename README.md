@@ -61,9 +61,11 @@ Prerequisites on the headset:
   detected plane/mesh counts, semantic labels, and tracking diagnostics.
 * **Audio input** — microphone by default (requested on page load; gain boosted
   and browser auto-gain disabled so music actually drives the visuals) or local
-  audio files.
+  audio files. If mic permission is denied, a silent generated-noise source
+  drives the visuals so the show goes on.
 * **Fullscreen preview** — the embedded desktop visualizer has a fullscreen
-  button.
+  button and re-renders at your screen's resolution and aspect ratio, on
+  desktop and mobile.
 
 ### Deploying to GitHub Pages
 

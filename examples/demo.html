@@ -564,6 +564,7 @@
       var canvas = document.getElementById('canvas');
 
       function connectToAudioAnalyzer(sourceNode) {
+        stopNoise();
         if(delayedAudible) {
           delayedAudible.disconnect();
         }
@@ -629,6 +630,7 @@
       }
 
       function connectMicAudio(sourceNode, audioContext) {
+        stopNoise();
         audioContext.resume();
 
         var gainNode = audioContext.createGain();
@@ -638,7 +640,63 @@
         visualizer.connectAudio(gainNode);
         currentAudioNode = gainNode;
         xrPool.forEach((e) => e.visualizer.connectAudio(gainNode));
-        startRenderer();
+        if (!rendering) {
+          rendering = true;
+          startRenderer();
+        }
+      }
+
+      // no mic permission: feed the analyzer a looped, pulsing noise buffer
+      // so the visuals still move. it never touches the speakers.
+      var noiseSource = null;
+      var noiseGain = null;
+
+      function stopNoise() {
+        if (!noiseSource) return;
+        try { noiseSource.stop(); } catch (e) {}
+        try { visualizer.disconnectAudio(noiseGain); } catch (e) {}
+        xrPool.forEach((e) => {
+          try { e.visualizer.disconnectAudio(noiseGain); } catch (err) {}
+        });
+        noiseSource = null;
+        noiseGain = null;
+      }
+
+      function startNoiseAudio() {
+        if (noiseSource) return;
+        audioContext.resume();
+
+        var seconds = 8;
+        var rate = audioContext.sampleRate;
+        var buffer = audioContext.createBuffer(1, rate * seconds, rate);
+        var data = buffer.getChannelData(0);
+        for (var i = 0; i < data.length; i++) {
+          var t = i / rate;
+          // beat-ish envelope (2 Hz pulse swelling over the loop) so the
+          // presets react like there's music, not flat static
+          var env = 0.55 + 0.45 * Math.sin(2 * Math.PI * 2 * t) *
+                            Math.sin(2 * Math.PI * t / seconds);
+          data[i] = (Math.random() * 2 - 1) * env;
+        }
+
+        noiseSource = audioContext.createBufferSource();
+        noiseSource.buffer = buffer;
+        noiseSource.loop = true;
+
+        noiseGain = audioContext.createGain();
+        noiseGain.gain.value = 1.0;
+        noiseSource.connect(noiseGain);
+        // deliberately not connected to audioContext.destination
+
+        visualizer.connectAudio(noiseGain);
+        currentAudioNode = noiseGain;
+        xrPool.forEach((e) => e.visualizer.connectAudio(noiseGain));
+        noiseSource.start(0);
+
+        if (!rendering) {
+          rendering = true;
+          startRenderer();
+        }
       }
 
       function nextPreset(blendTime = 5.7) {
@@ -678,6 +736,46 @@
           cycleInterval = setInterval(() => nextPreset(2.7), presetCycleLength);
         }
       }
+
+      // fullscreen: re-render at the screen's own resolution/aspect so the
+      // visualizer fills the display instead of stretching 800x600
+      var BASE_WIDTH = 800;
+      var BASE_HEIGHT = 600;
+
+      function fullscreenElement() {
+        return document.fullscreenElement || document.webkitFullscreenElement || null;
+      }
+
+      function syncCanvasToFullscreen() {
+        if (!visualizer) return;
+        var dpr = window.devicePixelRatio || 1;
+        if (fullscreenElement() === canvas) {
+          var w = window.innerWidth;
+          var h = window.innerHeight;
+          var ratio = Math.min(dpr, 2); // 3x phone screens are overkill
+          canvas.width = Math.round(w * ratio);
+          canvas.height = Math.round(h * ratio);
+          visualizer.setRendererSize(w, h, { pixelRatio: ratio });
+        } else {
+          canvas.width = BASE_WIDTH;
+          canvas.height = BASE_HEIGHT;
+          visualizer.setRendererSize(BASE_WIDTH, BASE_HEIGHT, { pixelRatio: dpr });
+        }
+      }
+
+      document.addEventListener('fullscreenchange', syncCanvasToFullscreen);
+      document.addEventListener('webkitfullscreenchange', syncCanvasToFullscreen);
+      // viewport dimensions can land after fullscreenchange (and change again
+      // when a phone rotates) — resize catches both
+      window.addEventListener('resize', () => {
+        if (fullscreenElement() === canvas) syncCanvasToFullscreen();
+      });
+
+      $('#fullscreenBut').click(() => {
+        var req = canvas.requestFullscreen || canvas.webkitRequestFullscreen ||
+                  canvas.mozRequestFullScreen;
+        if (req) req.call(canvas);
+      });
 
       $(document).keydown((e) => {
         if (e.which === 32 || e.which === 39) {
@@ -732,8 +830,10 @@
           var micSourceNode = audioContext.createMediaStreamSource(stream);
           connectMicAudio(micSourceNode, audioContext);
         }).catch((err) => {
-          // denied or unavailable: leave the source buttons up
+          // denied or unavailable: leave the source buttons up and drive the
+          // visuals with generated noise so the show goes on
           console.log('Error getting audio stream from getUserMedia', err);
+          startNoiseAudio();
         });
       }
 
@@ -1255,7 +1355,8 @@
         headset (like a Meta Quest 3) it paints the visuals across the actual walls,
         floor, ceiling, and furniture of the room you're standing in.</p>
       <p><strong>Audio:</strong> the page asks for your microphone right away —
-        allow it and the visuals react to whatever is playing around you. Prefer
+        allow it and the visuals react to whatever is playing around you; deny it
+        and a built-in noise generator keeps the visuals moving. Prefer
         files? Use the buttons below instead. Space bar or arrow keys switch
         presets, and the panel below previews the visualizer.</p>
       <p><strong>On a headset:</strong> run Space Setup first so the browser knows
@@ -1338,13 +1439,6 @@
         built on <a href="https://github.com/jberg/butterchurn">Butterchurn</a> by jberg.</p>
     </footer>
   </main>
-  <script>
-    document.getElementById('fullscreenBut').addEventListener('click', function () {
-      var c = document.getElementById('canvas');
-      var req = c.requestFullscreen || c.webkitRequestFullscreen || c.mozRequestFullScreen;
-      if (req) req.call(c);
-    });
-  </script>
   <script>
     // background metaball "lava" animation, borrowed from recordMyScreen
     (function () {

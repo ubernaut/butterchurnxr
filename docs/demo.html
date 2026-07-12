@@ -543,7 +543,7 @@
     }
   </style>
 
-  <script type="module" crossorigin src="./assets/demo-B-kKZCZX.js"></script>
+  <script type="module" crossorigin src="./assets/demo-Hp_O2aJz.js"></script>
 </head>
 <body>
   <canvas id="backgroundLava" aria-hidden="true"></canvas>
@@ -559,7 +559,8 @@
         headset (like a Meta Quest 3) it paints the visuals across the actual walls,
         floor, ceiling, and furniture of the room you're standing in.</p>
       <p><strong>Audio:</strong> the page asks for your microphone right away —
-        allow it and the visuals react to whatever is playing around you. Prefer
+        allow it and the visuals react to whatever is playing around you; deny it
+        and a built-in noise generator keeps the visuals moving. Prefer
         files? Use the buttons below instead. Space bar or arrow keys switch
         presets, and the panel below previews the visualizer.</p>
       <p><strong>On a headset:</strong> run Space Setup first so the browser knows
@@ -642,13 +643,6 @@
         built on <a href="https://github.com/jberg/butterchurn">Butterchurn</a> by jberg.</p>
     </footer>
   </main>
-  <script>
-    document.getElementById('fullscreenBut').addEventListener('click', function () {
-      var c = document.getElementById('canvas');
-      var req = c.requestFullscreen || c.webkitRequestFullscreen || c.mozRequestFullScreen;
-      if (req) req.call(c);
-    });
-  </script>
   <script>
     // background metaball "lava" animation, borrowed from recordMyScreen
     (function () {
