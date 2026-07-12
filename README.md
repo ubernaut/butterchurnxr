@@ -6,6 +6,15 @@ This fork adds a WebXR mixed-reality demo that projects the visualizer onto the
 walls, floor, ceiling, and furniture of your real room on a Meta Quest 3 (or any
 headset whose browser supports `immersive-ar` with plane detection).
 
+## Try it live
+
+**<https://ubernaut.github.io/butterchurnxr/>**
+
+The hosted page works out of the box: it asks for your microphone (or you can
+load local audio files), shows the visualizer in the page, and offers **Enter
+AR** on WebXR-capable headsets. Because it's served over HTTPS by GitHub Pages,
+you can open it directly in the Quest browser with no local server at all.
+
 ## Running the XR demo
 
 WebXR requires a secure context, so the dev server runs HTTPS with a
@@ -37,7 +46,7 @@ Prerequisites on the headset:
 * **Multiple simultaneous visualizations** — a pool of 1–5 independent
   butterchurn instances (dropdown in the UI, changeable live in AR) is dealt
   round-robin across the planes so neighboring surfaces show different presets.
-* **Occlusion modes** (checkbox + dropdown, also live in AR):
+* **Occlusion modes** (checkbox + dropdown, also live in AR; off by default):
   * *furniture occludes (room mesh)* — scanned furniture renders as depth-only
     occluders, so your real couch/table show through visuals behind them
   * *visualize on furniture too* — projects the visualizer onto the furniture
@@ -50,8 +59,22 @@ Prerequisites on the headset:
 * **In-AR UI** — the page controls are a DOM overlay inside the session, so
   everything is clickable with the controller pointer while in AR. A HUD shows
   detected plane/mesh counts, semantic labels, and tracking diagnostics.
-* **Audio input** — local audio files or microphone (gain boosted and browser
-  auto-gain disabled so music actually drives the visuals).
+* **Audio input** — microphone by default (requested on page load; gain boosted
+  and browser auto-gain disabled so music actually drives the visuals) or local
+  audio files.
+* **Fullscreen preview** — the embedded desktop visualizer has a fullscreen
+  button.
+
+### Deploying to GitHub Pages
+
+    pnpm dev-build      # dist/butterchurn.js is bundled into the page
+    pnpm build:pages    # bundles examples/demo.html into docs/
+
+`build:pages` (see `vite.pages.config.js`) writes a static, relative-path build
+to `docs/`, which GitHub Pages serves at
+<https://ubernaut.github.io/butterchurnxr/> (repo settings: Pages → deploy from
+branch → `master` / `/docs`). Commit the regenerated `docs/` folder to publish
+changes.
 
 ## [Try the original out](https://butterchurnviz.com)
 
