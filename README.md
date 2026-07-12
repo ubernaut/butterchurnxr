@@ -1,9 +1,59 @@
-# Butterchurn
+# Butterchurn XR
 
-Butterchurn is a WebGL implementation of the Milkdrop Visualizer
+Butterchurn is a WebGL implementation of the Milkdrop Visualizer.
 
+This fork adds a WebXR mixed-reality demo that projects the visualizer onto the
+walls, floor, ceiling, and furniture of your real room on a Meta Quest 3 (or any
+headset whose browser supports `immersive-ar` with plane detection).
 
-## [Try it out](https://butterchurnviz.com)
+## Running the XR demo
+
+WebXR requires a secure context, so the dev server runs HTTPS with a
+self-signed certificate and binds to `0.0.0.0` so a headset on your local
+network can reach it:
+
+    pnpm install
+    pnpm dev-build     # builds dist/butterchurn.js, which the demo imports
+    pnpm demo          # vite + https on https://0.0.0.0:8443
+
+Vite prints your LAN address (e.g. `https://192.168.1.50:8443`). In the Quest
+browser, open `https://<your-lan-ip>:8443/examples/demo.html`, click through
+the certificate warning (Advanced → Proceed), pick an audio source, and press
+**Enter AR**.
+
+Prerequisites on the headset:
+
+* Run **Space Setup** (Settings → Environment setup) in the room you'll use —
+  detected planes and furniture come from this scan. No scan means no planes;
+  the demo then falls back to a single panel floating in front of you.
+* Grant the browser permission for spatial data (and the microphone, if using
+  mic input) when prompted.
+
+### XR features
+
+* **Visuals on every detected plane** — each wall/floor/ceiling/table plane the
+  headset reports gets the visualization mapped across its actual polygon,
+  tracked every frame.
+* **Multiple simultaneous visualizations** — a pool of 1–5 independent
+  butterchurn instances (dropdown in the UI, changeable live in AR) is dealt
+  round-robin across the planes so neighboring surfaces show different presets.
+* **Occlusion modes** (checkbox + dropdown, also live in AR):
+  * *furniture occludes (room mesh)* — scanned furniture renders as depth-only
+    occluders, so your real couch/table show through visuals behind them
+  * *visualize on furniture too* — projects the visualizer onto the furniture
+    meshes as well
+  * *live depth occlusion* — uses the headset's real-time depth sensor so
+    people and pets occlude the visuals too (select **before** entering AR;
+    the WebXR feature set is fixed at session start)
+* **Controller input** — A or B on the right controller loads new random
+  presets on every surface. Presets also auto-cycle (configurable on the page).
+* **In-AR UI** — the page controls are a DOM overlay inside the session, so
+  everything is clickable with the controller pointer while in AR. A HUD shows
+  detected plane/mesh counts, semantic labels, and tracking diagnostics.
+* **Audio input** — local audio files or microphone (gain boosted and browser
+  auto-gain disabled so music actually drives the visuals).
+
+## [Try the original out](https://butterchurnviz.com)
 
 [![Butterchurn Screenshot](preview.png)](https://butterchurnviz.com)
 
