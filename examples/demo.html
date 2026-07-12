@@ -760,27 +760,25 @@
       function syncCanvasToFullscreen() {
         if (!visualizer) return;
         var dpr = window.devicePixelRatio || 1;
-        var w, h, ratio;
+        // butterchurn's output viewport is exactly the width x height given to
+        // setRendererSize (pixelRatio only scales internal textures), so the
+        // canvas backing store must match it 1:1 or the image lands in a
+        // corner. for fullscreen, pass device pixels as the size itself.
+        var w, h, pixelRatio;
         if (fullscreenElement() === canvas) {
-          w = window.innerWidth;
-          h = window.innerHeight;
-          ratio = Math.min(dpr, 2); // 3x phone screens are overkill
+          var ratio = Math.min(dpr, 2); // 3x phone screens are overkill
+          w = Math.round(window.innerWidth * ratio);
+          h = Math.round(window.innerHeight * ratio);
+          pixelRatio = 1;
         } else {
           w = BASE_WIDTH;
           h = BASE_HEIGHT;
-          ratio = dpr;
-          if (canvas.width === w && canvas.height === h) return;
-          canvas.width = w;
-          canvas.height = h;
-          visualizer.setRendererSize(w, h, { pixelRatio: ratio });
-          return;
+          pixelRatio = dpr;
         }
-        var bw = Math.round(w * ratio);
-        var bh = Math.round(h * ratio);
-        if (canvas.width === bw && canvas.height === bh) return;
-        canvas.width = bw;
-        canvas.height = bh;
-        visualizer.setRendererSize(w, h, { pixelRatio: ratio });
+        if (canvas.width === w && canvas.height === h) return;
+        canvas.width = w;
+        canvas.height = h;
+        visualizer.setRendererSize(w, h, { pixelRatio: pixelRatio });
       }
 
       function onFullscreenChange() {
