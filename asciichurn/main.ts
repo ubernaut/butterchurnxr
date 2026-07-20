@@ -11,12 +11,16 @@
 import { crayon } from "crayon";
 import { PerspectiveCamera, Scene } from "three";
 
-import { Computed, Signal, Tui } from "tui/mod.ts";
-import { handleKeyboardControls } from "tui/src/controls.ts";
-import { ThreeAsciiObject } from "tui/src/canvas/three_ascii.ts";
-import { Text } from "tui/src/components/text.ts";
-import { handleInput } from "tui/src/input.ts";
-import { emptyStyle } from "tui/src/theme.ts";
+import {
+  Computed,
+  emptyStyle,
+  handleInput,
+  handleKeyboardControls,
+  Signal,
+  Text,
+  ThreeAsciiObject,
+  Tui,
+} from "tui";
 
 import { createAudioAnalyser } from "./audio.ts";
 import {

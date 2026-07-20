@@ -1,13 +1,13 @@
 import type { Camera, Scene } from "three";
-import type { ThreeAsciiGridRenderer } from "tui/src/canvas/three_ascii.ts";
-import type { AcerolaAsciiNodeOptions } from "tui/src/three_ascii/AcerolaAsciiNode.ts";
-import type { TerminalGlyphStyle } from "tui/src/three_ascii/glyphs.ts";
 import {
+  type AcerolaAsciiNodeOptions,
+  type TerminalGlyphStyle,
   ThreeAsciiAnsiGridAssembler,
+  type ThreeAsciiGridRenderer,
   type ThreeAsciiRendererOptions,
   type ThreeAsciiRenderFrame,
   type ThreeAsciiRenderFrameOptions,
-} from "tui/src/three_ascii/renderer.ts";
+} from "tui";
 
 import type { AudioFrame } from "./audio.ts";
 import {

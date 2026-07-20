@@ -1,6 +1,8 @@
 {
   "imports": {
-    "tui/": "../../deno_tui/",
+    // Immutable deno_tui revision containing the renderer-factory, cached ANSI
+    // grid, block-alpha, and grid-revision contracts used by asciichurn.
+    "tui": "https://raw.githubusercontent.com/ubernaut/deno_tui/d68332ae26cd5c34f254d4b5de074af858ab6c5e/mod.ts",
     "crayon": "https://deno.land/x/crayon@3.3.3/mod.ts",
     "puppeteer": "npm:puppeteer-core@24.12.1",
     "three": "npm:three@0.183.2",
@@ -14,10 +16,10 @@
   },
   "nodeModulesDir": "none",
   "tasks": {
-    "start": "deno run -A main.ts",
-    "audio-test": "deno run --allow-run=parec,pw-record,arecord audio.ts",
-    "check": "deno check main.ts audio.ts butterchurn_bridge.ts butterchurn_ascii_renderer.ts smoke.ts",
-    "test": "deno test -A audio_test.ts butterchurn_ascii_renderer_test.ts",
-    "smoke": "deno run -A smoke.ts"
+    "start": "deno run --frozen -A main.ts",
+    "audio-test": "deno run --frozen --allow-run=parec,pw-record,arecord audio.ts",
+    "check": "deno check --frozen main.ts audio.ts butterchurn_bridge.ts butterchurn_ascii_renderer.ts smoke.ts",
+    "test": "deno test --frozen -A audio_test.ts butterchurn_ascii_renderer_test.ts",
+    "smoke": "deno run --frozen -A smoke.ts"
   }
 }
