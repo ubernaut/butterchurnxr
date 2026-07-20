@@ -1,0 +1,23 @@
+{
+  "imports": {
+    "tui/": "../../deno_tui/",
+    "crayon": "https://deno.land/x/crayon@3.3.3/mod.ts",
+    "puppeteer": "npm:puppeteer-core@24.12.1",
+    "three": "npm:three@0.183.2",
+    "three/tsl": "npm:three@0.183.2/tsl",
+    "three/webgpu": "npm:three@0.183.2/webgpu",
+    "yoga-layout": "npm:yoga-layout@3.2.1",
+    "markdown-it": "npm:markdown-it@14.3.0"
+  },
+  "compilerOptions": {
+    "lib": ["deno.window", "dom", "dom.iterable"]
+  },
+  "nodeModulesDir": "none",
+  "tasks": {
+    "start": "deno run -A main.ts",
+    "audio-test": "deno run --allow-run=parec,pw-record,arecord audio.ts",
+    "check": "deno check main.ts audio.ts butterchurn_bridge.ts butterchurn_ascii_renderer.ts smoke.ts",
+    "test": "deno test -A audio_test.ts butterchurn_ascii_renderer_test.ts",
+    "smoke": "deno run -A smoke.ts"
+  }
+}
